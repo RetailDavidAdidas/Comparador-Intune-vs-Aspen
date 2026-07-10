@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>Comparador Intune vs Aspen</title>
+
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/.min.js</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+
+
+
+
+<style>
+
+
+#resumen{
+    background:white;
+    padding:10px;
+    margin-bottom:10px;
+}
+
+#panelFiltros{
+    position:sticky;
+    top:0;
+    background:white;
+    padding:10px;
+    border-bottom:1px solid #ccc;
+    z-index:9999;
+}
+
+
+#resultado{
+    margin-top:10px;
+}
+
+
+.match{
+    background:#d4edda;
+}
+
+.error{
+    background:#f8d7da;
+}
+
+table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:12px;
+}
+
+th{
+    position:sticky;
+    top:45px;
+    background:#2c3e50;
+    color:white;
+}
+
+th,td{
+    border:1px solid #ccc;
+    padding:4px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>Comparador Intune vs Aspen</h1>
+
+<h3>Archivo Intune</h3>
+<input type="file" id="fileIntune">
+
+<h3>Archivo Aspen</h3>
+<input type="file" id="fileAspen">
+
+<br><br>
+
+<button id="btnProcesar">
+Procesar Comparación
+</button>
+
+<button id="btnExportar">
+Exportar Resultado
+</button>
+<input
+        type="text"
+        id="buscarSerial"
+        placeholder="Buscar Serial..."
+        onkeyup="buscarSerial()"/>
+		
+	<div style="margin-top:15px;">
+    <progress id="barra" value="0" max="100" style="width:500px;"></progress>
+    <span id="progresoTexto">0%</span>
+</div>
+		
+<div id="panelFiltros">
+
+    <button onclick="filtrar('TODOS')">Todos</button>
+    <button onclick="filtrar('MATCH')">MATCH</button>
+    <button onclick="filtrar('DIFERENCIAS')">Diferencias</button>
+    <button onclick="filtrar('NO ENCONTRADO')">No encontrados</button>
+	<button onclick="filtrar('USUARIO')">Usuarios Diferentes</button>
+
+</div>
+
+<div id="resumen"></div>
+
+
+
+<div id="resultado"></div>
+
+<div id="resultado" document.getElementById("resultado").innerHTML =html;></div>
+
+
+<div id="resumen" document.getElementById("resumen").innerHTML = html;></div>
+
+
+
+
+
+
+<script>
+
+
+let resultadoFinal = [];
+
+document.getElementById("btnProcesar")
+    .addEventListener("click", procesar);
+
+document.getElementById("btnExportar")
+    .addEventListener("click", exportarExcel);
+	
+	
+function buscarSerial(){
+
+    const texto =
+        document.getElementById("buscarSerial")
+        .value
+        .toUpperCase();
+
+    const filtrados =
+        resultadoFinal.filter(
+            x =>
+            x.Serial &&
+            x.Serial.toUpperCase().includes(texto)
+        );
+
+    renderTabla(filtrados);
+
+}
+	
+	
+
+
+
+
+async function leerExcel(file){
+
+    const data = await file.arrayBuffer();
+
+    const workbook = XLSX.read(data,{
+        type:"array"
+    });
+
+    const hoja =
+        workbook.Sheets[
+            workbook.SheetNames[0]
+        ];
+
+    return XLSX.utils.sheet_to_json(
+        hoja,
+        {
+            defval:""
+        }
+    );
+
+}
+
+
+async function procesar(){
+
+    try{
+
+        document.getElementById("barra").value = 0;
+        document.getElementById("progresoTexto").innerText = "0%";
+
+        const archivoIntune =
+            document.getElementById("fileIntune").files[0];
+
+        const archivoAspen =
+            document.getElementById("fileAspen").files[0];
+
+        if(!archivoIntune){
+            alert("Seleccione archivo Intune");
+            return;
+        }
+
+        if(!archivoAspen){
+            alert("Seleccione archivo Aspen");
+            return;
+        }
+
+        const datosIntune =
+            await leerExcel(archivoIntune);
+
+        const datosAspen =
+            await leerExcel(archivoAspen);
+
+        let mapaAspen = new Map();
+
+        datosAspen.forEach(item => {
+
+            const serial =
+                String(item["Serial number"] || "")
+                .trim()
+                .toUpperCase()
+                .replace(/\s+/g,"");
+
+            if(serial){
+                mapaAspen.set(serial,item);
+            }
+
+        });
+
+        let encontrados = 0;
+        let noEncontrados = 0;
+
+        let hostOkTotal = 0;
+        let hostDifTotal = 0;
+
+        let modeloOkTotal = 0;
+        let modeloDifTotal = 0;
+
+        let userOkTotal = 0;
+        let userDifTotal = 0;
+		
+		let equiposSinCheckIn30 = 0;
+
+        let html = `
+<table>
+<tr>
+    <th>Serial</th>
+    <th>Hostname Intune</th>
+    <th>Hostname Aspen</th>
+
+    <th>Hardware Domain</th>
+    <th>State</th>
+    <th>Location</th>
+
+    <th>Last Check In</th>
+
+    <th>Modelo Intune</th>
+    <th>Modelo Aspen</th>
+
+    <th>Usuario Intune</th>
+    <th>User Intune</th>
+    <th>User Aspen</th>
+
+    <th>Estado</th>
+</tr>
+`;
+
+        datosIntune.forEach((item,index)=>{
+
+            if(index % 1000 === 0){
+
+                const porcentaje =
+                    Math.round(
+                        (index / datosIntune.length) * 100
+                    );
+
+                document.getElementById("barra").value =
+                    porcentaje;
+
+                document.getElementById("progresoTexto").innerText =
+                    porcentaje + "%";
+            }
+	
+
+            const serial =
+                String(item["Serial number"] || "")
+                .trim()
+                .toUpperCase()
+                .replace(/\s+/g,"");
+
+            const hostnameIntune =
+                String(item["Device name"] || "")
+                .trim();
+
+            const modeloIntune =
+                String(item["Model"] || "")
+                .trim();
+
+            const usuarioIntune =
+                String(item["Primary user display name"] || "")
+                .trim();
+
+            const userIntune =
+                String(item["Primary user email address"] || "")
+                .trim()
+                .toLowerCase();
+const lastCheckIn =
+    String(item["Last Check in"] || "")
+    .trim();
+
+var diasSinCheckIn = 0;
+
+
+if(lastCheckIn){
+
+    const fechaCheckIn = new Date(lastCheckIn);
+
+    const hoy = new Date();
+
+    diasSinCheckIn = Math.floor(
+        (hoy - fechaCheckIn) /
+        (1000 * 60 * 60 * 24)
+    );
+
+}
+
+if(diasSinCheckIn > 30){
+    equiposSinCheckIn30++;
+}
+
+            if(mapaAspen.has(serial)){
+
+                encontrados++;
+
+                const aspen =
+                    mapaAspen.get(serial);
+
+                const hostnameAspen =
+                    String(aspen["Configuration Item"] || "")
+                    .trim();
+
+                const modeloAspen =
+                    String(aspen["Model"] || "")
+                    .trim();
+
+                const userAspen =
+                    String(aspen["Assigned to"] || "")
+                    .trim()
+                    .toLowerCase();
+					const hardwareDomain =
+    String(aspen["Hardware Domain"] || "")
+        .trim();
+
+const state =
+    String(aspen["State"] || "")
+        .trim();
+
+const location =
+    String(aspen["Location"] || "")
+        .trim();
+				
+					const usuarioNormalizado =
+    String(usuarioIntune || "")
+        .replace("[External]", "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g,"")
+        .trim()
+        .toLowerCase();
+
+let nombreIntune = usuarioNormalizado;
+
+if(usuarioNormalizado.includes(",")){
+
+    const partes =
+        usuarioNormalizado.split(",");
+
+    const apellido =
+        partes[0].trim();
+
+    const nombre =
+        partes[1].trim();
+
+    nombreIntune =
+        `${nombre} ${apellido}`;
+}
+
+const nombreAspen =
+    String(userAspen || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g,"")
+        .trim()
+        .toLowerCase();
+
+const userOk =
+    nombreIntune === nombreAspen;
+
+
+
+                const hostOk =
+                    hostnameIntune.toUpperCase() ===
+                    hostnameAspen.toUpperCase();
+
+                const modeloOk =
+                    modeloAspen.toUpperCase()
+                        .includes(modeloIntune.toUpperCase())
+                    ||
+                    modeloIntune.toUpperCase()
+                        .includes(modeloAspen.toUpperCase());
+						
+				
+
+
+                hostOk
+                    ? hostOkTotal++
+                    : hostDifTotal++;
+
+                modeloOk
+                    ? modeloOkTotal++
+                    : modeloDifTotal++;
+
+                userOk
+                    ? userOkTotal++
+                    : userDifTotal++;
+
+                let estado = "MATCH";
+
+                if(!hostOk && !modeloOk && !userOk){
+                    estado = "HOSTNAME + MODELO + USER";
+                }
+                else if(!hostOk){
+                    estado = "HOSTNAME";
+                }
+                else if(!modeloOk){
+                    estado = "MODELO";
+                }
+                else if(!userOk){
+                    estado = "USUARIO";
+                }
+
+ html += `
+<tr>
+
+    <td style="background:#d4edda;font-weight:bold;">
+        ${serial}
+    </td>
+
+    <td style="background:${hostOk ? '#d4edda' : '#f8d7da'};">
+        ${hostnameIntune}
+    </td>
+
+    <td style="background:${hostOk ? '#d4edda' : '#f8d7da'};">
+        ${hostnameAspen}
+    </td>
+
+    <td>${hardwareDomain}</td>
+
+    <td>${state}</td>
+
+    <td>${location}</td>
+
+    <td style="
+        background:${
+            diasSinCheckIn > 30
+                ? '#f8d7da'
+                : '#d4edda'
+        };
+    ">
+        ${lastCheckIn}
+        (${diasSinCheckIn} días)
+    </td>
+
+    <td style="background:${modeloOk ? '#d4edda' : '#f8d7da'};">
+        ${modeloIntune}
+    </td>
+
+    <td style="background:${modeloOk ? '#d4edda' : '#f8d7da'};">
+        ${modeloAspen}
+    </td>
+
+    <td style="background:#fff3cd;">
+        ${usuarioIntune}
+    </td>
+
+    <td style="background:${userOk ? '#d4edda' : '#f8d7da'};">
+        ${userIntune}
+    </td>
+
+    <td style="background:${userOk ? '#d4edda' : '#f8d7da'};">
+        ${userAspen}
+    </td>
+
+    <td style="
+        background:${estado === 'MATCH'
+            ? '#d4edda'
+            : '#f8d7da'};
+        font-weight:bold;
+    ">
+        ${estado}
+    </td>
+
+</tr>
+`;
+            }else{
+
+                noEncontrados++;
+				
+				
+
+                html += `
+<tr>
+
+    <td style="background:#fff3cd;font-weight:bold;">
+        ${serial}
+    </td>
+
+    <td>${hostnameIntune}</td>
+
+    <td></td>
+
+    <td></td>
+
+    <td></td>
+
+    <td></td>
+
+    <td style="
+        background:${
+            diasSinCheckIn > 30
+                ? '#f8d7da'
+                : '#d4edda'
+        };
+    ">
+        ${lastCheckIn}
+        (${diasSinCheckIn} días)
+    </td>
+
+    <td>${modeloIntune}</td>
+
+    <td></td>
+
+    <td>${usuarioIntune}</td>
+
+    <td>${userIntune}</td>
+
+    <td></td>
+
+    <td style="
+        background:#f8d7da;
+        font-weight:bold;
+    ">
+        NO ENCONTRADO
+    </td>
+
+</tr>
+`;
+            }
+
+        });
+
+        html += "</table>";
+
+        const complianceHostname =
+            encontrados > 0
+            ? ((hostOkTotal / encontrados) * 100).toFixed(2)
+            : 0;
+
+        const complianceModelo =
+            encontrados > 0
+            ? ((modeloOkTotal / encontrados) * 100).toFixed(2)
+            : 0;
+
+        const complianceUser =
+            encontrados > 0
+            ? ((userOkTotal / encontrados) * 100).toFixed(2)
+            : 0;
+
+        const complianceGeneral =
+            encontrados > 0
+            ? (
+                (
+                    hostOkTotal +
+                    modeloOkTotal +
+                    userOkTotal
+                )
+                /
+                (encontrados * 3)
+                * 100
+              ).toFixed(2)
+            : 0;
+
+        document.getElementById("resumen").innerHTML = `
+		
+
+        <h2>Resumen</h2>
+
+        <b>Equipos Intune:</b> ${datosIntune.length}<br>
+        <b>Equipos Aspen:</b> ${datosAspen.length}<br><br>
+
+        <b>Encontrados:</b> ${encontrados}<br>
+        <b>No encontrados:</b> ${noEncontrados}<br><br>
+		<b>Equipos sin Check-In > 30 días:</b>
+		${equiposSinCheckIn30}<br><br>
+		<b>No encontrados:</b> ${noEncontrados}<br><br>
+
+        <b>Hostname OK:</b> ${hostOkTotal}<br>
+        <b>Hostname Diferente:</b> ${hostDifTotal}<br>
+        <b>Compliance Hostname:</b> ${complianceHostname}%<br><br>
+
+        <b>Modelo OK:</b> ${modeloOkTotal}<br>
+        <b>Modelo Diferente:</b> ${modeloDifTotal}<br>
+        <b>Compliance Modelo:</b> ${complianceModelo}%<br><br>
+
+        <b>User OK:</b> ${userOkTotal}<br>
+        <b>User Diferente:</b> ${userDifTotal}<br>
+        <b>Compliance User:</b> ${complianceUser}%<br><br>
+
+        <b>Compliance General:</b> ${complianceGeneral}%<br>
+		
+
+
+
+
+
+        `;
+
+        document.getElementById("resultado").innerHTML =
+            html;
+
+        document.getElementById("barra").value = 100;
+        document.getElementById("progresoTexto").innerText =
+            "100%";
+
+    }
+    catch(error){
+
+        console.error(error);
+
+        alert(
+            "Error: " + error.message
+        );
+
+    }
+
+}
+
+function filtrar(tipo){
+
+    console.log("Filtro presionado:", tipo);
+
+    const filas =
+        document.querySelectorAll("#resultado table tr");
+
+    filas.forEach((fila,index)=>{
+
+        if(index===0){
+            fila.style.display="";
+            return;
+        }
+
+        const estado =
+            fila.cells[fila.cells.length-1]
+            .textContent
+            .trim()
+            .toUpperCase();
+
+        switch(tipo){
+
+            case "TODOS":
+                fila.style.display="";
+                break;
+
+            case "MATCH":
+                fila.style.display =
+                    estado==="MATCH"
+                    ? ""
+                    : "none";
+                break;
+
+            case "DIFERENCIAS":
+                fila.style.display =
+                    estado!=="MATCH" &&
+                    estado!=="NO ENCONTRADO"
+                    ? ""
+                    : "none";
+                break;
+
+            case "NO ENCONTRADO":
+                fila.style.display =
+                    estado==="NO ENCONTRADO"
+                    ? ""
+                    : "none";
+                break;
+
+            case "USUARIO":
+                fila.style.display =
+                    estado.includes("USUARIO") ||
+                    estado.includes("USER")
+                    ? ""
+                    : "none";
+                break;
+        }
+    });
+}
+
+
+function renderTabla(datos){
+
+    let html = `
+    <table>
+        <tr>
+            <th>Serial</th>
+            <th>Device Name</th>
+            <th>Configuration Item</th>
+            <th>User Intune</th>
+            <th>User Aspen</th>
+            <th>Model Intune</th>
+            <th>Model Aspen</th>
+            <th>Estado</th>
+        </tr>
+    `;
+
+    datos.forEach(r => {
+
+        let clase =
+            r.Estado === "MATCH"
+            ? "ok"
+            : "error";
+
+        html += `
+        <tr class="${clase}">
+            <td>${r.Serial}</td>
+            <td>${r.DeviceName}</td>
+            <td>${r.ConfigurationItem}</td>
+            <td>${r.UserIntune}</td>
+            <td>${r.UserAspen}</td>
+            <td>${r.ModelIntune}</td>
+            <td>${r.ModelAspen}</td>
+            <td>${r.Estado}</td>
+        </tr>
+        `;
+
+    });
+
+    html += "</table>";
+
+    document.getElementById("resultado").innerHTML = html;
+
+}
+function buscarSerial(){
+
+    const texto =
+        document.getElementById("buscarSerial")
+        .value
+        .trim()
+        .toUpperCase();
+
+    const datos =
+        resultadoFinal.filter(
+            r =>
+            r.Serial
+            .toUpperCase()
+            .includes(texto)
+        );
+
+    renderTabla(datos);
+
+}
+
+function exportarExcel(){
+
+    const tabla =
+        document.querySelector("#resultado table");
+
+    if(!tabla){
+        alert("No existen resultados");
+        return;
+    }
+
+    const wb =
+        XLSX.utils.table_to_book(
+            tabla,
+            {
+                sheet: "Comparacion"
+            }
+        );
+
+    XLSX.writeFile(
+        wb,
+        "Resultado_Aspen_vs_Intune.xlsx"
+    );
+
+}
+
+function mostrarTodos(){
+    renderTabla(resultadoFinal);
+}
+
+
+
+</script>
+
+
+</body>
+
+</html>
